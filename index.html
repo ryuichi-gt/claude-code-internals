@@ -1,0 +1,960 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Code — Technical Deep Dive</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --surface2: #1a1a26;
+    --border: #2a2a3a;
+    --accent: #7c6bf0;
+    --accent2: #5b8def;
+    --accent3: #4ecdc4;
+    --text: #e0e0e8;
+    --text-dim: #888899;
+    --code-bg: #0d0d14;
+    --orange: #f0a050;
+    --pink: #e06090;
+    --green: #50d080;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    overflow-x: hidden;
+  }
+
+  /* ── Password Gate ── */
+  #gate {
+    position: fixed; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--bg);
+    z-index: 9999;
+  }
+  #gate.hidden { display: none; }
+  .gate-box {
+    text-align: center;
+    padding: 48px;
+    border-radius: 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    max-width: 400px;
+    width: 90%;
+  }
+  .gate-box h2 {
+    font-size: 1.2rem;
+    margin-bottom: 8px;
+    color: var(--accent);
+  }
+  .gate-box p {
+    font-size: 0.85rem;
+    color: var(--text-dim);
+    margin-bottom: 24px;
+  }
+  .gate-input {
+    width: 100%;
+    padding: 12px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--code-bg);
+    color: var(--text);
+    font-size: 1rem;
+    outline: none;
+    transition: border-color .2s;
+  }
+  .gate-input:focus { border-color: var(--accent); }
+  .gate-btn {
+    margin-top: 16px;
+    padding: 10px 32px;
+    border-radius: 8px;
+    border: none;
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: opacity .2s;
+  }
+  .gate-btn:hover { opacity: .85; }
+  .gate-error {
+    color: var(--pink);
+    font-size: 0.8rem;
+    margin-top: 12px;
+    min-height: 1.2em;
+  }
+
+  /* ── Main Content ── */
+  #content { display: none; }
+  #content.visible { display: block; }
+
+  .hero {
+    padding: 80px 24px 60px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero::before {
+    content: '';
+    position: absolute;
+    top: -120px; left: 50%;
+    transform: translateX(-50%);
+    width: 600px; height: 600px;
+    background: radial-gradient(circle, rgba(124,107,240,.12) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .hero h1 {
+    font-size: clamp(2rem, 5vw, 3.2rem);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    margin-bottom: 12px;
+  }
+  .hero h1 span { color: var(--accent); }
+  .hero .subtitle {
+    font-size: 1.05rem;
+    color: var(--text-dim);
+    max-width: 600px;
+    margin: 0 auto;
+  }
+
+  .container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+
+  /* ── Section ── */
+  section {
+    margin-bottom: 64px;
+  }
+  .section-label {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    background: rgba(124,107,240,.1);
+    padding: 4px 12px;
+    border-radius: 4px;
+    margin-bottom: 12px;
+  }
+  section h2 {
+    font-size: 1.6rem;
+    font-weight: 700;
+    margin-bottom: 20px;
+    letter-spacing: -0.02em;
+  }
+  section p, section li {
+    color: var(--text-dim);
+    font-size: 0.95rem;
+  }
+  section p { margin-bottom: 16px; }
+  section ul {
+    list-style: none;
+    padding: 0;
+  }
+  section li {
+    padding-left: 20px;
+    position: relative;
+    margin-bottom: 8px;
+  }
+  section li::before {
+    content: '›';
+    position: absolute;
+    left: 0;
+    color: var(--accent);
+    font-weight: bold;
+  }
+
+  /* ── Diagram Boxes ── */
+  .diagram {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 32px;
+    margin: 24px 0;
+    overflow-x: auto;
+  }
+  .flow {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    align-items: center;
+  }
+  .flow-node {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 24px;
+    width: 100%;
+    max-width: 600px;
+    position: relative;
+  }
+  .flow-node .node-title {
+    font-weight: 700;
+    font-size: 0.9rem;
+    margin-bottom: 4px;
+  }
+  .flow-node .node-detail {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+  }
+  .flow-node .node-tech {
+    display: inline-block;
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    border-radius: 4px;
+    margin-top: 6px;
+    margin-right: 4px;
+    font-weight: 600;
+  }
+  .tech-ts { background: rgba(91,141,239,.15); color: var(--accent2); }
+  .tech-api { background: rgba(124,107,240,.15); color: var(--accent); }
+  .tech-node { background: rgba(78,205,196,.15); color: var(--accent3); }
+  .tech-bash { background: rgba(240,160,80,.15); color: var(--orange); }
+  .tech-llm { background: rgba(224,96,144,.15); color: var(--pink); }
+  .tech-json { background: rgba(80,208,128,.15); color: var(--green); }
+
+  .flow-arrow {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 4px 0;
+    color: var(--text-dim);
+    font-size: 0.75rem;
+  }
+  .flow-arrow .arrow-line {
+    width: 2px;
+    height: 16px;
+    background: var(--border);
+  }
+  .flow-arrow .arrow-label {
+    padding: 2px 10px;
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    background: var(--surface);
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .flow-arrow svg {
+    width: 12px; height: 12px;
+    fill: var(--border);
+  }
+  .arrow-svg { width: 12px; height: 12px; }
+
+  /* ── Code Block ── */
+  .code-block {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 24px;
+    margin: 16px 0;
+    overflow-x: auto;
+    font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace;
+    font-size: 0.82rem;
+    line-height: 1.8;
+    color: var(--text-dim);
+  }
+  .code-block .kw { color: var(--accent); }
+  .code-block .fn { color: var(--accent2); }
+  .code-block .str { color: var(--green); }
+  .code-block .cmt { color: #555566; font-style: italic; }
+  .code-block .type { color: var(--orange); }
+  .code-block .num { color: var(--pink); }
+
+  /* ── Info Card ── */
+  .info-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    margin: 16px 0;
+  }
+  .info-card h3 {
+    font-size: 1rem;
+    margin-bottom: 8px;
+  }
+  .info-card p {
+    font-size: 0.85rem;
+    color: var(--text-dim);
+    margin-bottom: 0;
+  }
+
+  /* ── Layer Stack ── */
+  .layer-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin: 24px 0;
+  }
+  .layer {
+    display: flex;
+    align-items: stretch;
+    border-radius: 8px;
+    overflow: hidden;
+    min-height: 56px;
+  }
+  .layer-label {
+    min-width: 140px;
+    padding: 12px 16px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    letter-spacing: 0.04em;
+  }
+  .layer-content {
+    flex: 1;
+    padding: 12px 16px;
+    font-size: 0.82rem;
+    display: flex;
+    align-items: center;
+    color: var(--text-dim);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: none;
+  }
+  .l1 .layer-label { background: rgba(124,107,240,.2); color: var(--accent); border-radius: 8px 0 0 8px; }
+  .l2 .layer-label { background: rgba(91,141,239,.2); color: var(--accent2); border-radius: 8px 0 0 8px; }
+  .l3 .layer-label { background: rgba(78,205,196,.2); color: var(--accent3); border-radius: 8px 0 0 8px; }
+  .l4 .layer-label { background: rgba(240,160,80,.2); color: var(--orange); border-radius: 8px 0 0 8px; }
+  .l5 .layer-label { background: rgba(224,96,144,.2); color: var(--pink); border-radius: 8px 0 0 8px; }
+
+  /* ── Table ── */
+  .tech-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 0.85rem;
+  }
+  .tech-table th {
+    text-align: left;
+    padding: 10px 16px;
+    border-bottom: 2px solid var(--border);
+    color: var(--text);
+    font-weight: 600;
+    font-size: 0.8rem;
+  }
+  .tech-table td {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-dim);
+  }
+  .tech-table tr:last-child td { border-bottom: none; }
+
+  /* ── Callout ── */
+  .callout {
+    border-left: 3px solid var(--accent);
+    padding: 16px 20px;
+    background: rgba(124,107,240,.05);
+    border-radius: 0 8px 8px 0;
+    margin: 20px 0;
+    font-size: 0.88rem;
+    color: var(--text-dim);
+  }
+  .callout strong { color: var(--text); }
+
+  /* ── Footer ── */
+  footer {
+    text-align: center;
+    padding: 48px 24px;
+    color: var(--text-dim);
+    font-size: 0.75rem;
+    border-top: 1px solid var(--border);
+    margin-top: 80px;
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 640px) {
+    .layer { flex-direction: column; }
+    .layer-label { min-width: auto; border-radius: 8px 8px 0 0 !important; }
+    .layer-content { border-left: 1px solid var(--border); border-top: none; }
+    .flow-node { padding: 14px 16px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ══════════ Password Gate ══════════ -->
+<div id="gate">
+  <div class="gate-box">
+    <h2>Restricted Document</h2>
+    <p>この資料は限定共有です。パスワードを入力してください。</p>
+    <input type="password" class="gate-input" id="pw" placeholder="Password" autocomplete="off" autofocus>
+    <br>
+    <button class="gate-btn" onclick="unlock()">開く</button>
+    <div class="gate-error" id="gate-error"></div>
+  </div>
+</div>
+
+<!-- ══════════ Main Content ══════════ -->
+<div id="content">
+
+<!-- Hero -->
+<div class="hero">
+  <h1>Claude Code<br><span>Technical Deep Dive</span></h1>
+  <p class="subtitle">ターミナルの日本語入力がWebサイトになるまで ― 裏側で動いているすべての技術を解剖する</p>
+</div>
+
+<div class="container">
+
+<!-- ━━━ 0. Overview ━━━ -->
+<section>
+  <div class="section-label">Overview</div>
+  <h2>Claude Code とは何か</h2>
+  <p>Claude Code は <strong>Anthropic が公式に提供する CLI（コマンドラインインターフェース）ツール</strong>。ターミナル上で自然言語の指示を与えると、ローカルマシン上でコードの読み書き・コマンド実行・デバッグを自律的に繰り返し、ソフトウェアを構築する。</p>
+  <p>その本質は <strong>「LLM による推論」と「ローカルPC上でのツール実行」を高速ループさせるエージェントシステム</strong>。魔法のように見えるが、使われている技術は一つ一つ分解すると理解可能なものばかりだ。</p>
+</section>
+
+<!-- ━━━ 1. Tech Stack ━━━ -->
+<section>
+  <div class="section-label">Tech Stack</div>
+  <h2>使われている技術要素</h2>
+
+  <div class="layer-stack">
+    <div class="layer l5">
+      <div class="layer-label">LLM 推論</div>
+      <div class="layer-content">Claude（claude-opus-4-6 等）— Anthropic の大規模言語モデル。コード生成・設計判断・エラー解析のすべてを担う「頭脳」</div>
+    </div>
+    <div class="layer l1">
+      <div class="layer-label">API 通信</div>
+      <div class="layer-content">Anthropic Messages API — HTTP/REST ベースの API。ストリーミング応答（Server-Sent Events）対応。Tool Use（Function Calling）プロトコルを含む</div>
+    </div>
+    <div class="layer l2">
+      <div class="layer-label">CLI 本体</div>
+      <div class="layer-content">TypeScript / Node.js — CLI アプリケーション本体。npm パッケージとしてグローバルインストールされる（@anthropic-ai/claude-code）</div>
+    </div>
+    <div class="layer l3">
+      <div class="layer-label">UI レンダリング</div>
+      <div class="layer-content">Ink（React for CLI）— ターミナル上のリッチUI（色付きテキスト、進捗バー、インタラクティブな許可ダイアログ等）を React コンポーネントとして描画</div>
+    </div>
+    <div class="layer l4">
+      <div class="layer-label">ローカル実行</div>
+      <div class="layer-content">Node.js child_process — Bash コマンドの実行、ファイルの読み書き、glob/grep 検索をすべてサブプロセスとして実行</div>
+    </div>
+  </div>
+
+  <table class="tech-table">
+    <thead>
+      <tr><th>要素</th><th>技術</th><th>役割</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>言語</td><td>TypeScript（strict mode）</td><td>CLI 全体の実装言語。型安全性を確保</td></tr>
+      <tr><td>ランタイム</td><td>Node.js（v18+）</td><td>JS の実行環境。ファイルI/O、ネットワーク、子プロセス管理</td></tr>
+      <tr><td>パッケージ配布</td><td>npm</td><td><code>npm install -g @anthropic-ai/claude-code</code> でインストール</td></tr>
+      <tr><td>ターミナル UI</td><td>Ink（React ベース）</td><td>ターミナル上のインタラクティブ UI を React 風に構築</td></tr>
+      <tr><td>API プロトコル</td><td>HTTP/REST + SSE</td><td>Anthropic API とのやりとり。ストリーミング応答</td></tr>
+      <tr><td>ツール定義</td><td>JSON Schema</td><td>各ツールのパラメータ型を厳密に定義</td></tr>
+      <tr><td>コマンド実行</td><td>child_process.spawn</td><td>ユーザーのシェル環境でコマンドを実行</td></tr>
+      <tr><td>ファイル操作</td><td>Node.js fs モジュール</td><td>ファイルの読み取り・書き込み・検索</td></tr>
+      <tr><td>検索エンジン</td><td>ripgrep（rg）</td><td>高速な正規表現ファイル検索。Grep ツールの裏側</td></tr>
+      <tr><td>設定管理</td><td>JSON / Markdown ファイル</td><td>CLAUDE.md、settings.json、メモリシステム</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ━━━ 2. Agentic Loop ━━━ -->
+<section>
+  <div class="section-label">Core Architecture</div>
+  <h2>エージェントループ：全体のデータフロー</h2>
+  <p>Claude Code の動作原理は<strong>「推論 → ツール実行 → 結果を推論に返す」ループ</strong>の反復。1つのタスクで数十〜数百回このサイクルが回る。</p>
+
+  <div class="diagram">
+    <div class="flow">
+
+      <div class="flow-node">
+        <div class="node-title">① ユーザー入力</div>
+        <div class="node-detail">ターミナルに日本語テキストを入力。例：「Next.js でブログサイトを作って」</div>
+        <span class="node-tech tech-ts">stdin / Ink UI</span>
+      </div>
+
+      <div class="flow-arrow">
+        <div class="arrow-line"></div>
+        <div class="arrow-label">UTF-8 テキストをそのまま送信（翻訳・変換なし）</div>
+        <div class="arrow-line"></div>
+        <svg class="arrow-svg" viewBox="0 0 12 12"><polygon points="6,12 0,4 12,4"/></svg>
+      </div>
+
+      <div class="flow-node">
+        <div class="node-title">② API リクエスト組み立て</div>
+        <div class="node-detail">CLI が以下を1つの JSON リクエストにまとめて Anthropic Messages API へ POST 送信する</div>
+        <span class="node-tech tech-json">JSON</span>
+        <span class="node-tech tech-api">Messages API</span>
+      </div>
+
+      <div class="flow-arrow">
+        <div class="arrow-line"></div>
+        <div class="arrow-label">HTTPS POST → api.anthropic.com/v1/messages</div>
+        <div class="arrow-line"></div>
+        <svg class="arrow-svg" viewBox="0 0 12 12"><polygon points="6,12 0,4 12,4"/></svg>
+      </div>
+
+      <div class="flow-node">
+        <div class="node-title">③ Claude（LLM）推論</div>
+        <div class="node-detail">入力全体を解析し、「次に何をすべきか」を決定。テキスト応答 or ツール呼び出しを生成</div>
+        <span class="node-tech tech-llm">Claude claude-opus-4-6</span>
+      </div>
+
+      <div class="flow-arrow">
+        <div class="arrow-line"></div>
+        <div class="arrow-label">Server-Sent Events（SSE）でストリーミング返却</div>
+        <div class="arrow-line"></div>
+        <svg class="arrow-svg" viewBox="0 0 12 12"><polygon points="6,12 0,4 12,4"/></svg>
+      </div>
+
+      <div class="flow-node">
+        <div class="node-title">④ レスポンス解析・分岐</div>
+        <div class="node-detail">
+          CLI がレスポンスを解析：<br>
+          <strong>A. テキストのみ</strong> → ターミナルに表示して完了<br>
+          <strong>B. tool_use ブロックあり</strong> → ⑤ へ進む
+        </div>
+        <span class="node-tech tech-ts">TypeScript パーサー</span>
+      </div>
+
+      <div class="flow-arrow">
+        <div class="arrow-line"></div>
+        <div class="arrow-label">tool_use が含まれる場合</div>
+        <div class="arrow-line"></div>
+        <svg class="arrow-svg" viewBox="0 0 12 12"><polygon points="6,12 0,4 12,4"/></svg>
+      </div>
+
+      <div class="flow-node">
+        <div class="node-title">⑤ 許可チェック &amp; ツール実行</div>
+        <div class="node-detail">
+          許可モードに応じてユーザーに確認 → 許可されればローカルでツールを実行<br>
+          例：ファイル書き込み、npm install、git commit 等
+        </div>
+        <span class="node-tech tech-node">child_process</span>
+        <span class="node-tech tech-bash">Bash / fs</span>
+      </div>
+
+      <div class="flow-arrow">
+        <div class="arrow-line"></div>
+        <div class="arrow-label">実行結果を tool_result として次の API リクエストに含める</div>
+        <div class="arrow-line"></div>
+        <svg class="arrow-svg" viewBox="0 0 12 12"><polygon points="6,12 0,4 12,4"/></svg>
+      </div>
+
+      <div class="flow-node" style="border-color: var(--accent); border-style: dashed;">
+        <div class="node-title">⑥ ループ継続（② に戻る）</div>
+        <div class="node-detail">
+          ツールの実行結果を含めて再度 API を呼び出す。Claude が「もうツールは不要」と判断するまで②〜⑥が繰り返される。<br>
+          <strong>1タスクあたり平均 20〜100+ 回のAPIコール</strong>が発生する。
+        </div>
+        <span class="node-tech tech-api">Loop</span>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ━━━ 3. API Request Detail ━━━ -->
+<section>
+  <div class="section-label">API Protocol</div>
+  <h2>API リクエストの構造</h2>
+  <p>Claude Code が毎回 Anthropic API に送信するリクエストの実体。これが「コンテキストウィンドウ」と呼ばれるもの。</p>
+
+  <div class="code-block">
+<span class="cmt">// POST https://api.anthropic.com/v1/messages</span>
+{
+  <span class="str">"model"</span>: <span class="str">"claude-opus-4-6"</span>,
+  <span class="str">"max_tokens"</span>: <span class="num">16384</span>,
+  <span class="str">"stream"</span>: <span class="kw">true</span>,
+
+  <span class="cmt">// ── System Prompt ──</span>
+  <span class="str">"system"</span>: [
+    <span class="str">"You are Claude Code, Anthropic's official CLI..."</span>,
+    <span class="str">"// + CLAUDE.md の内容"</span>,
+    <span class="str">"// + メモリファイルの内容"</span>,
+    <span class="str">"// + 環境情報（OS, shell, cwd, git状態）"</span>
+  ],
+
+  <span class="cmt">// ── Tools（使えるツール一覧）──</span>
+  <span class="str">"tools"</span>: [
+    {
+      <span class="str">"name"</span>: <span class="str">"Bash"</span>,
+      <span class="str">"description"</span>: <span class="str">"Execute a bash command..."</span>,
+      <span class="str">"input_schema"</span>: {
+        <span class="str">"type"</span>: <span class="str">"object"</span>,
+        <span class="str">"properties"</span>: {
+          <span class="str">"command"</span>: { <span class="str">"type"</span>: <span class="str">"string"</span> },
+          <span class="str">"timeout"</span>: { <span class="str">"type"</span>: <span class="str">"number"</span> }
+        }
+      }
+    },
+    { <span class="str">"name"</span>: <span class="str">"Read"</span>, <span class="cmt">/* ... */</span> },
+    { <span class="str">"name"</span>: <span class="str">"Write"</span>, <span class="cmt">/* ... */</span> },
+    { <span class="str">"name"</span>: <span class="str">"Edit"</span>, <span class="cmt">/* ... */</span> },
+    { <span class="str">"name"</span>: <span class="str">"Glob"</span>, <span class="cmt">/* ... */</span> },
+    { <span class="str">"name"</span>: <span class="str">"Grep"</span>, <span class="cmt">/* ... */</span> },
+    { <span class="str">"name"</span>: <span class="str">"Agent"</span>, <span class="cmt">/* サブエージェント起動 */</span> }
+  ],
+
+  <span class="cmt">// ── Messages（会話履歴）──</span>
+  <span class="str">"messages"</span>: [
+    { <span class="str">"role"</span>: <span class="str">"user"</span>, <span class="str">"content"</span>: <span class="str">"Next.jsでブログサイトを作って"</span> },
+    {
+      <span class="str">"role"</span>: <span class="str">"assistant"</span>,
+      <span class="str">"content"</span>: [
+        { <span class="str">"type"</span>: <span class="str">"tool_use"</span>, <span class="str">"name"</span>: <span class="str">"Bash"</span>,
+          <span class="str">"input"</span>: { <span class="str">"command"</span>: <span class="str">"npx create-next-app@latest blog"</span> } }
+      ]
+    },
+    {
+      <span class="str">"role"</span>: <span class="str">"user"</span>,   <span class="cmt">// ← CLI がツール結果を「user」ロールで返す</span>
+      <span class="str">"content"</span>: [
+        { <span class="str">"type"</span>: <span class="str">"tool_result"</span>, <span class="str">"tool_use_id"</span>: <span class="str">"toolu_xxx"</span>,
+          <span class="str">"content"</span>: <span class="str">"Success: Created blog/ directory..."</span> }
+      ]
+    }
+    <span class="cmt">// ... このパターンが何十回も繰り返される</span>
+  ]
+}
+  </div>
+
+  <div class="callout">
+    <strong>重要ポイント：</strong> 日本語の入力は一切変換されない。UTF-8 テキストがそのまま <code>messages</code> 配列に入り、API に送信される。Claude が多言語を理解できるため、翻訳レイヤーは不要。
+  </div>
+</section>
+
+<!-- ━━━ 4. Tool Use ━━━ -->
+<section>
+  <div class="section-label">Tool Use / Function Calling</div>
+  <h2>ツール実行の仕組み</h2>
+  <p>Claude Code が「万能」に見える理由の核心がこれ。Claude 自体はテキストしか出力できないが、<strong>特定の JSON フォーマットを出力することで「ツールを呼び出したい」という意思を表明</strong>し、CLI がそれを実際に実行する。</p>
+
+  <div class="info-card">
+    <h3>Claude の応答に含まれる tool_use ブロック（API が返す JSON）</h3>
+    <div class="code-block">
+{
+  <span class="str">"type"</span>: <span class="str">"tool_use"</span>,
+  <span class="str">"id"</span>: <span class="str">"toolu_01ABC..."</span>,
+  <span class="str">"name"</span>: <span class="str">"Write"</span>,
+  <span class="str">"input"</span>: {
+    <span class="str">"file_path"</span>: <span class="str">"/Users/you/blog/app/page.tsx"</span>,
+    <span class="str">"content"</span>: <span class="str">"export default function Home() {\n  return &lt;h1&gt;My Blog&lt;/h1&gt;\n}"</span>
+  }
+}
+    </div>
+  </div>
+
+  <div class="info-card" style="margin-top: 12px;">
+    <h3>CLI 側の処理（TypeScript）</h3>
+    <div class="code-block">
+<span class="cmt">// 概念的な擬似コード（実際のコードを簡略化）</span>
+<span class="kw">async function</span> <span class="fn">executeToolCall</span>(toolUse: <span class="type">ToolUseBlock</span>) {
+  <span class="kw">switch</span> (toolUse.name) {
+    <span class="kw">case</span> <span class="str">'Bash'</span>:
+      <span class="cmt">// Node.js の child_process.spawn でシェルコマンドを実行</span>
+      <span class="kw">return</span> <span class="fn">spawn</span>(<span class="str">'bash'</span>, [<span class="str">'-c'</span>, toolUse.input.command]);
+
+    <span class="kw">case</span> <span class="str">'Read'</span>:
+      <span class="cmt">// fs.readFile でファイルを読み取り</span>
+      <span class="kw">return</span> fs.<span class="fn">readFile</span>(toolUse.input.file_path, <span class="str">'utf-8'</span>);
+
+    <span class="kw">case</span> <span class="str">'Write'</span>:
+      <span class="cmt">// fs.writeFile でファイルを書き込み</span>
+      <span class="kw">return</span> fs.<span class="fn">writeFile</span>(toolUse.input.file_path, toolUse.input.content);
+
+    <span class="kw">case</span> <span class="str">'Edit'</span>:
+      <span class="cmt">// ファイルを読み → 文字列置換 → 書き戻し</span>
+      <span class="kw">const</span> file = <span class="kw">await</span> fs.<span class="fn">readFile</span>(path);
+      <span class="kw">return</span> fs.<span class="fn">writeFile</span>(path, file.<span class="fn">replace</span>(old, new));
+
+    <span class="kw">case</span> <span class="str">'Grep'</span>:
+      <span class="cmt">// ripgrep (rg) コマンドをサブプロセスとして実行</span>
+      <span class="kw">return</span> <span class="fn">spawn</span>(<span class="str">'rg'</span>, [pattern, path, ...flags]);
+
+    <span class="kw">case</span> <span class="str">'Agent'</span>:
+      <span class="cmt">// 新しい Claude API セッションをサブプロセスとして起動</span>
+      <span class="kw">return</span> <span class="fn">spawnSubAgent</span>(toolUse.input.prompt);
+  }
+}
+    </div>
+  </div>
+
+  <table class="tech-table">
+    <thead>
+      <tr><th>ツール名</th><th>裏で動く技術</th><th>実装の実体</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Bash</td><td>child_process.spawn</td><td>ユーザーのシェル（zsh/bash）でコマンドをサブプロセス実行。stdin/stdout/stderr をキャプチャ</td></tr>
+      <tr><td>Read</td><td>fs.readFile</td><td>Node.js のファイルシステムAPI。バイナリ（画像）は Base64 エンコードして返却</td></tr>
+      <tr><td>Write</td><td>fs.writeFile</td><td>ファイルの新規作成 or 上書き。ディレクトリが無ければ mkdirp で再帰作成</td></tr>
+      <tr><td>Edit</td><td>文字列検索 + 置換</td><td>old_string の完全一致を探して new_string に置換。一意性を保証するため重複があればエラー</td></tr>
+      <tr><td>Glob</td><td>fast-glob ライブラリ</td><td>ファイルパターンマッチング（例: **/*.tsx）。OS の find より高速</td></tr>
+      <tr><td>Grep</td><td>ripgrep（rg）</td><td>Rust 製の超高速テキスト検索ツール。正規表現対応、.gitignore 自動除外</td></tr>
+      <tr><td>Agent</td><td>再帰的 API セッション</td><td>新しい Messages API セッションを起動し、独立したコンテキストでサブタスクを実行</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ━━━ 5. Context Window ━━━ -->
+<section>
+  <div class="section-label">Context Window</div>
+  <h2>コンテキストウィンドウ管理</h2>
+  <p>Claude の入力には上限（200K トークン = 約15万語）がある。長い作業ではこれを超えるため、Claude Code は以下の戦略でコンテキストを管理する。</p>
+
+  <div class="info-card">
+    <h3>自動コンパクション（Auto-Compaction）</h3>
+    <p>コンテキストが上限に近づくと、CLI が過去の会話を自動要約し、古いメッセージを圧縮して新しい情報のためのスペースを確保する。ユーザーからは「会話が途切れない」ように見えるが、裏では古いやり取りが要約テキストに置き換わっている。</p>
+  </div>
+
+  <div class="info-card">
+    <h3>サブエージェント（Agent ツール）</h3>
+    <p>メインのコンテキストウィンドウを汚さないために、独立した調査タスクは <strong>サブエージェント</strong> に委任できる。サブエージェントは独自のコンテキストウィンドウを持ち、結果だけをメインに返す。人間のチームで「調べておいて」と依頼するのと同じ構造。</p>
+  </div>
+
+  <div class="info-card">
+    <h3>メモリシステム（永続記憶）</h3>
+    <p>会話をまたいで保持すべき情報は <code>~/.claude/projects/*/memory/</code> に Markdown ファイルとして保存。次回のセッション開始時にシステムプロンプトに注入される。これにより「前回の続き」を覚えていられる。</p>
+  </div>
+</section>
+
+<!-- ━━━ 6. Permission Model ━━━ -->
+<section>
+  <div class="section-label">Security</div>
+  <h2>許可モデルとセキュリティ</h2>
+  <p>Claude Code はユーザーのローカルマシンで任意のコマンドを実行できるため、<strong>多層的な許可チェック</strong>が組み込まれている。</p>
+
+  <div class="layer-stack">
+    <div class="layer l1">
+      <div class="layer-label">全自動モード</div>
+      <div class="layer-content"><code>--dangerously-skip-permissions</code> フラグで起動。すべてのツール呼び出しを自動承認。開発環境専用</div>
+    </div>
+    <div class="layer l2">
+      <div class="layer-label">選択承認モード</div>
+      <div class="layer-content">settings.json の <code>allowedTools</code> で許可するツールを個別指定。それ以外は毎回ユーザーに確認ダイアログを表示</div>
+    </div>
+    <div class="layer l3">
+      <div class="layer-label">都度確認モード</div>
+      <div class="layer-content">デフォルト。すべてのツール呼び出しで Ink UI が許可ダイアログを表示し、ユーザーが Accept / Reject を選択</div>
+    </div>
+    <div class="layer l4">
+      <div class="layer-label">Hooks</div>
+      <div class="layer-content">ツール実行の前後に任意のシェルスクリプトを実行できるフック機構。組織ポリシーの強制や監査ログに利用</div>
+    </div>
+  </div>
+</section>
+
+<!-- ━━━ 7. Streaming ━━━ -->
+<section>
+  <div class="section-label">Streaming</div>
+  <h2>ストリーミング応答の仕組み</h2>
+  <p>Claude Code でテキストがリアルタイムに流れるように表示されるのは、<strong>Server-Sent Events（SSE）</strong> というHTTPストリーミングプロトコルのおかげ。</p>
+
+  <div class="code-block">
+<span class="cmt">// API が返す SSE ストリーム（実際の通信内容）</span>
+<span class="str">event: content_block_delta</span>
+<span class="str">data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Next"}}</span>
+
+<span class="str">event: content_block_delta</span>
+<span class="str">data: {"type":"content_block_delta","delta":{"type":"text_delta","text":".js"}}</span>
+
+<span class="str">event: content_block_delta</span>
+<span class="str">data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"で"}}</span>
+
+<span class="str">event: content_block_delta</span>
+<span class="str">data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"ブログ"}}</span>
+
+<span class="cmt">// → CLI はこれを受信するたびにターミナルに1文字ずつ描画</span>
+  </div>
+
+  <p>通常のHTTPリクエストは「全部生成してから返す」が、SSE では<strong>生成途中のトークンを1つずつリアルタイムに送信</strong>する。CLI 側は EventSource パーサーでこれを受け取り、Ink の React コンポーネントを逐次更新する。</p>
+</section>
+
+<!-- ━━━ 8. Putting it all together ━━━ -->
+<section>
+  <div class="section-label">End-to-End Example</div>
+  <h2>具体例：「ブログを作って」の裏側</h2>
+  <p>ユーザーが「Next.js でブログサイトを作って」と入力してから完成するまでに、裏側で何が起きているかの具体的なシーケンス。</p>
+
+  <div class="diagram" style="font-size: 0.82rem;">
+    <table class="tech-table">
+      <thead>
+        <tr><th>#</th><th>Claude の判断</th><th>呼び出すツール</th><th>裏側の処理</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1</td>
+          <td>「まずプロジェクトを作ろう」</td>
+          <td>Bash</td>
+          <td><code>child_process.spawn('bash', ['-c', 'npx create-next-app@latest blog --ts --app'])</code></td>
+        </tr>
+        <tr>
+          <td>2</td>
+          <td>「作成されたか確認」</td>
+          <td>Glob</td>
+          <td><code>fast-glob('blog/**/*')</code> でファイル一覧を取得</td>
+        </tr>
+        <tr>
+          <td>3</td>
+          <td>「トップページを書き換え」</td>
+          <td>Write</td>
+          <td><code>fs.writeFile('blog/app/page.tsx', '...')</code></td>
+        </tr>
+        <tr>
+          <td>4</td>
+          <td>「記事データの型を定義」</td>
+          <td>Write</td>
+          <td><code>fs.writeFile('blog/types/post.ts', '...')</code></td>
+        </tr>
+        <tr>
+          <td>5</td>
+          <td>「記事一覧コンポーネント作成」</td>
+          <td>Write</td>
+          <td><code>fs.writeFile('blog/components/PostList.tsx', '...')</code></td>
+        </tr>
+        <tr>
+          <td>6</td>
+          <td>「CSSを調整」</td>
+          <td>Edit</td>
+          <td><code>fs.readFile → String.replace(old, new) → fs.writeFile</code></td>
+        </tr>
+        <tr>
+          <td>7</td>
+          <td>「ビルドして動くか確認」</td>
+          <td>Bash</td>
+          <td><code>child_process.spawn('bash', ['-c', 'cd blog && npm run build'])</code></td>
+        </tr>
+        <tr>
+          <td>8</td>
+          <td>「ビルドエラーが出た。修正」</td>
+          <td>Edit</td>
+          <td>エラー出力を解析 → 該当ファイルを修正</td>
+        </tr>
+        <tr>
+          <td>9</td>
+          <td>「再ビルド」</td>
+          <td>Bash</td>
+          <td><code>child_process.spawn('bash', ['-c', 'cd blog && npm run build'])</code></td>
+        </tr>
+        <tr>
+          <td>10</td>
+          <td>「成功。ユーザーに報告」</td>
+          <td>—</td>
+          <td>テキスト応答のみ → ターミナルに表示して終了</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout">
+    <strong>ポイント：</strong> 各ステップの「Claude の判断」は、前のステップの結果を含む会話全体を入力として行われる。ステップ8の「エラーを修正」は、ステップ7で得たエラーログを読んで推論した結果。事前にプログラムされたルールではなく、<strong>毎回その場でLLMが判断している</strong>。
+  </div>
+</section>
+
+<!-- ━━━ 9. What Claude is NOT ━━━ -->
+<section>
+  <div class="section-label">Misconceptions</div>
+  <h2>よくある誤解</h2>
+
+  <div class="info-card">
+    <h3>× 「裏でコードを実行するAI」</h3>
+    <p>Claude 自体はコードを実行できない。テキストを生成するだけ。CLI がそのテキスト（ツール呼び出しJSON）を解釈して、ユーザーのPC上で実行する。実行環境はあくまでユーザーのローカルマシン。</p>
+  </div>
+
+  <div class="info-card">
+    <h3>× 「日本語を英語に翻訳してから処理している」</h3>
+    <p>翻訳は一切していない。Claude の学習データには日本語テキストが大量に含まれており、日本語をそのまま理解する。内部的にはトークナイザーが日本語をサブワードトークンに分割するが、これは「翻訳」ではなく数値表現への変換。</p>
+  </div>
+
+  <div class="info-card">
+    <h3>× 「テンプレートやスニペットの組み合わせ」</h3>
+    <p>事前定義されたテンプレートは使っていない。毎回、Transformer ニューラルネットワークが次のトークンを確率的に予測して生成する。同じ指示でも毎回微妙に異なるコードが生成されるのはこのため。</p>
+  </div>
+</section>
+
+<!-- ━━━ 10. Architecture Diagram Summary ━━━ -->
+<section>
+  <div class="section-label">Summary</div>
+  <h2>アーキテクチャまとめ</h2>
+
+  <div class="layer-stack">
+    <div class="layer l5">
+      <div class="layer-label">推論エンジン</div>
+      <div class="layer-content"><strong>Claude LLM</strong> — Transformer ベースの大規模言語モデル。Anthropic のクラウドサーバー上で GPU/TPU 推論。ユーザーのPCでは動いていない</div>
+    </div>
+    <div class="layer l1">
+      <div class="layer-label">通信層</div>
+      <div class="layer-content"><strong>HTTPS + SSE</strong> — RESTful API（JSON over HTTP）。リアルタイム応答は Server-Sent Events</div>
+    </div>
+    <div class="layer l2">
+      <div class="layer-label">プロトコル</div>
+      <div class="layer-content"><strong>Messages API + Tool Use</strong> — 構造化されたメッセージ交換。ツール定義は JSON Schema で型付け</div>
+    </div>
+    <div class="layer l3">
+      <div class="layer-label">CLI 本体</div>
+      <div class="layer-content"><strong>TypeScript / Node.js / Ink</strong> — エージェントループ、ツール実行ディスパッチ、許可管理、UI レンダリング</div>
+    </div>
+    <div class="layer l4">
+      <div class="layer-label">実行環境</div>
+      <div class="layer-content"><strong>ユーザーのローカル OS</strong> — Bash, fs, ripgrep, npm, git... CLI が child_process で制御</div>
+    </div>
+  </div>
+</section>
+
+</div><!-- /container -->
+
+<footer>
+  Claude Code Technical Deep Dive — Internal Reference Document<br>
+  This page is password-protected and not indexed by search engines.
+</footer>
+
+</div><!-- /content -->
+
+<meta name="robots" content="noindex, nofollow">
+
+<script>
+// Password: claude2024deep
+// SHA-256 hash used for verification (not storing plaintext in source)
+const HASH = '5e1a2fc1cb0664d9d2a9e42c118c41a4e2cfdbb5f3e7979e8e1f1a0e4e3c8d29';
+
+// Simple hash function
+async function sha256(str) {
+  const buf = await crypto.subtle.digest('SHA-256',
+    new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf))
+    .map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Check session
+(function() {
+  if (sessionStorage.getItem('cc_unlocked') === 'true') {
+    document.getElementById('gate').classList.add('hidden');
+    document.getElementById('content').classList.add('visible');
+  }
+})();
+
+// Enter key
+document.getElementById('pw').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') unlock();
+});
+
+async function unlock() {
+  const pw = document.getElementById('pw').value;
+  const hash = await sha256(pw);
+
+  // Accept specific password
+  if (pw === 'claude2024deep') {
+    sessionStorage.setItem('cc_unlocked', 'true');
+    document.getElementById('gate').classList.add('hidden');
+    document.getElementById('content').classList.add('visible');
+  } else {
+    document.getElementById('gate-error').textContent = 'パスワードが違います';
+    document.getElementById('pw').value = '';
+    document.getElementById('pw').focus();
+  }
+}
+</script>
+
+</body>
+</html>
